@@ -194,10 +194,7 @@ Cambiar `VIEW_ORDER` a `"uniform"` si se reconstruye con gridding/NUFFT simple.
    vector y PyPulseq no lo modela. El bore de 80 cm implica una bobina de gradiente
    grande, lo que tiende a empeorar el PNS por unidad de slew: hay que pasar el `.seq`
    por el chequeo del fabricante, no darlo por descontado.
-3. **Perfil del pulso adiabático.** El script usa hyperbolic secant, que es lo que trae
-   PyPulseq 1.4.2. Los papers usan FOCI, que da bordes de slab más abruptos — y Edelman
-   apoya su versión mejorada justamente en esa nitidez para no saturar sangre entrante.
-   Conviene simular el perfil (KomaMRI o MRTwin) antes de ir al scanner.
+3. ~~Perfil del pulso adiabático.~~ **Simulado y corregido** — ver sección 8.
 4. ~~Intérprete Pulseq en el Free.Max.~~ **Confirmado: 1.4.2**, que coincide
    exactamente con la versión de PyPulseq usada, así que el `.seq` se escribe en
    formato 1.4.2 y no hay que degradar ninguna feature. La secuencia solo usa RF
@@ -208,3 +205,53 @@ Cambiar `VIEW_ORDER` a `"uniform"` si se reconstruye con gridding/NUFFT simple.
    `--quick` (2 slabs x 4 vistas, 504 bloques) y confirmar que carga antes del examen completo.
 5. **SAR.** A 0.55 T escala con B0² y no debería limitar ni con FA de 100° ni con los
    dos adiabáticos por disparo, pero conviene confirmarlo en el scanner.
+
+
+## 8. Perfil de los pulsos adiabáticos (simulación de Bloch)
+
+Los papers usan FOCI; PyPulseq 1.4.2 no lo trae. En vez de asumir que un sustituto
+sirve, se midió el perfil por integración directa de la ecuación de Bloch sobre la
+forma de onda compleja real del pulso (`sim_inversion_profile.py`). Sin aproximación
+de ángulo pequeño: rotación de Rodrigues en torno al campo efectivo, paso de 1 µs.
+
+Importa porque QISS depende de que la sangre arterial que sube no haya visto la
+inversión. Un borde inferior blando entrega el bolo con la cabecera oscura.
+
+### El primer intento falló
+
+Hyperbolic secant de 8 ms, banda venosa de 100 mm como el paper:
+
+| | transición | fuga bajo el borde nominal | veredicto |
+|---|---|---|---|
+| Inversión de fondo (19.5 mm) | 4.5 mm | 2.25 mm | tolerable (5–11 % del bolo) |
+| Banda venosa (100 mm) | 22.0 mm | 11.0 mm | **invade el slab 6 mm** |
+
+La causa es geométrica, no del pulso. El ancho de transición **en Hz** lo fija el
+pulso; al pasarlo a milímetros se divide por el gradiente selector. Una banda 5 veces
+más gruesa que el slab necesita un gradiente 5 veces más débil (0.293 contra 1.50
+mT/m), así que la misma transición se estira 5 veces. Con solo 5 mm de hueco, el borde
+blando de la banda venosa suprimía los 6 mm superiores del slab de imagen.
+
+### Dos correcciones
+
+**Adelgazar la banda venosa de 100 a 60 mm.** La banda solo tiene que cubrir lo que la
+sangre venosa alcanza a bajar durante el QI: 41 mm a 20 cm/s, 62 mm a 30 cm/s. Los
+100 mm del paper responden a su QI de 583 ms (117 mm a 20 cm/s). Copiarlos con nuestro
+QI de 207 ms era sobredimensionar, y el precio no era tiempo sino nitidez de borde.
+
+**Cambiar hypsec por WURST de 16 ms.** Barrido en `sim_venous_band_fix.py`: el hypsec
+satura en ~7.5 mm de fuga por más que se alargue, mientras el WURST sigue afilando.
+Además exige **menos** B1 de pico.
+
+### Resultado
+
+| | transición | fuga | impacto |
+|---|---|---|---|
+| Inversión de fondo | 2.75 mm | 0.25 mm | 1 % del bolo, carótida y vertebral |
+| Banda venosa (60 mm) | 8.5 mm | 1.0 mm | no invade; sobran 4 mm de margen |
+
+B1 de pico exigido: **9.37 µT** (contra 13.24 µT del hypsec).
+
+**Pendiente:** confirmar el B1 máximo del cuerpo del Free.Max. Un adiabático por
+debajo de su umbral de B1 deja de invertir de forma uniforme y todo este análisis
+se cae. Es el único número de esta sección que no está verificado.

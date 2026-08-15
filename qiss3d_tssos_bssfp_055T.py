@@ -144,10 +144,25 @@ def view_angle(i_view, n_views, order=VIEW_ORDER):
     return np.deg2rad((i_view * inc) % 180.0)
 
 # --- Modulos de supresion
+#
+# Tipo y duracion elegidos por simulacion de Bloch, no por defecto.  Ver
+# sim_inversion_profile.py y sim_venous_band_fix.py:  un hypsec de 8 ms deja un borde
+# inferior tan blando que la banda venosa INVADE el slab de imagen por 6 mm.  El WURST
+# de 16 ms reduce la fuga a 1 mm y ademas exige menos B1 de pico (9.4 frente a 13.2 uT).
+INV_PULSE_TYPE = "wurst"
+INV_DURATION = 16e-3                  # s
+INV_BANDWIDTH = 4000                  # Hz, ancho de barrido del WURST
+
 INV_SLAB_THICKNESS = SLAB_THICKNESS   # inversion de fondo, coextensiva con el slab
-INV_VENOUS_THICKNESS = 100e-3         # m, inversion "tracking" venosa (paper: 10 cm)
+
+# La banda venosa solo tiene que cubrir lo que la sangre venosa alcanza a BAJAR durante
+# el QI.  Con QI de 207 ms eso son 41 mm a 20 cm/s y 62 mm a 30 cm/s, asi que 60 mm
+# sobran.  Los 100 mm del paper responden a su QI de 583 ms (117 mm a 20 cm/s):
+# copiarlos aqui seria sobredimensionar, y el precio no es solo tiempo — una banda mas
+# gruesa exige un gradiente selector mas debil, y el mismo ancho de transicion en Hz se
+# estira proporcionalmente en milimetros. Adelgazar la banda afila su borde.
+INV_VENOUS_THICKNESS = 60e-3          # m
 INV_VENOUS_GAP = 5e-3                 # m, hueco entre borde superior del slab y la banda
-INV_DURATION = 8e-3                   # s, duracion del pulso adiabatico
 SPOILER_CYCLES_PER_VOXEL = 4          # ciclos de fase por voxel tras la inversion
 
 # Direccion de flujo: en el cuello la sangre arterial sube (caudal -> craneal, +z),
@@ -162,23 +177,27 @@ Z_SUPERIOR = +1
 def make_adiabatic_inversion(sys, thickness, z_center, duration=INV_DURATION):
     """Inversion adiabatica selectiva de slab, insensible a inhomogeneidad de B1.
 
-    Sustituye al pulso FOCI de los papers por un hyperbolic secant, que es lo que
-    ofrece PyPulseq 1.4.2 de fabrica.  DIFERENCIA A TENER PRESENTE: el FOCI da un
-    perfil de slab de bordes mas abruptos que el HS, y Edelman (MRM 2020) apoya su
-    version mejorada justamente en esa nitidez para no saturar la sangre entrante.
-    Con HS conviene verificar por simulacion el perfil antes de ir al scanner.
+    Sustituye al pulso FOCI de los papers.  El perfil resultante SE VERIFICO por
+    integracion de Bloch en vez de darlo por bueno (sim_inversion_profile.py): con el
+    WURST de 16 ms la inversion de fondo se pasa 2.2 mm del borde nominal del slab,
+    que son el 5 % del bolo carotideo y el 11 % del vertebral — un efecto de borde
+    tolerable. El hypsec de 8 ms que se probo primero era mucho peor en la banda
+    venosa, donde el gradiente selector es debil.
 
     El SAR de un adiabatico es alto en campo alto, pero a 0.55T escala con B0^2 y
     deja de ser el factor limitante.
     """
-    rf, gz, _ = pp.make_adiabatic_pulse(
-        pulse_type="hypsec",
+    kwargs = dict(
+        pulse_type=INV_PULSE_TYPE,
         duration=duration,
         slice_thickness=thickness,
         system=sys,
         return_gz=True,
         use="inversion",
     )
+    if INV_PULSE_TYPE == "wurst":
+        kwargs["bandwidth"] = INV_BANDWIDTH
+    rf, gz, _ = pp.make_adiabatic_pulse(**kwargs)
     # Desplazar la banda a su posicion axial mediante offset de frecuencia:
     # df = gamma * G * z, con G la amplitud del gradiente selector en Hz/m.
     rf.freq_offset = gz.amplitude * z_center
