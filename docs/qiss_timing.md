@@ -198,7 +198,13 @@ Cambiar `VIEW_ORDER` a `"uniform"` si se reconstruye con gridding/NUFFT simple.
    PyPulseq 1.4.2. Los papers usan FOCI, que da bordes de slab más abruptos — y Edelman
    apoya su versión mejorada justamente en esa nitidez para no saturar sangre entrante.
    Conviene simular el perfil (KomaMRI o MRTwin) antes de ir al scanner.
-4. **Intérprete Pulseq en el Free.Max.** El sistema corre syngo XA; la versión del
-   intérprete condiciona qué features del `.seq` son utilizables.
+4. ~~Intérprete Pulseq en el Free.Max.~~ **Confirmado: 1.4.2**, que coincide
+   exactamente con la versión de PyPulseq usada, así que el `.seq` se escribe en
+   formato 1.4.2 y no hay que degradar ninguna feature. La secuencia solo usa RF
+   arbitrario (los adiabáticos), trapecios, ADC y delays — nada de labels, triggers
+   ni extensions, que es donde más divergen las versiones de intérprete.
+   Lo que **sí** queda por comprobar es que el intérprete cargue los **38 304
+   bloques**: el `.seq` se carga entero en memoria. Conviene probar primero con
+   `--quick` (2 slabs, 2 018 bloques) y confirmar que carga antes del examen completo.
 5. **SAR.** A 0.55 T escala con B0² y no debería limitar ni con FA de 100° ni con los
    dos adiabáticos por disparo, pero conviene confirmarlo en el scanner.

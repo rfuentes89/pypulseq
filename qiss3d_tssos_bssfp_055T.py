@@ -34,6 +34,8 @@ Unidades SI en todo el script: Hz, s, T/m, m.  PyPulseq trabaja en Hz/m para
 gradientes; toda conversion desde mT/m es explicita.
 """
 
+import os
+import re
 from types import SimpleNamespace
 
 import numpy as np
@@ -79,8 +81,15 @@ system = pp.Opts(
     adc_dead_time=ADC_DEAD_TIME,
     grad_raster_time=10e-6,
     rf_raster_time=1e-6,
+    adc_samples_divisor=4,      # el interprete de Siemens exige multiplo de 4
     B0=B0,
 )
+
+# Version del interprete Pulseq instalado en el scanner del usuario.  PyPulseq 1.4.2
+# escribe formato 1.4.2, asi que hay coincidencia exacta y no hace falta degradar
+# ninguna feature.  Se comprueba en tiempo de ejecucion para que un futuro upgrade
+# de pypulseq no rompa la compatibilidad en silencio.
+SCANNER_INTERPRETER_VERSION = (1, 4, 2)
 
 # =============================================================================
 # 2. PARAMETROS DE LA SECUENCIA
@@ -338,29 +347,33 @@ def build_sequence(n_slabs=N_SLABS, n_views=N_VIEWS, verbose=True):
         z_venous = z_c + Z_SUPERIOR * (SLAB_THICKNESS / 2 + INV_VENOUS_GAP
                                        + INV_VENOUS_THICKNESS / 2)
 
+        # Los dos adiabaticos dependen solo del slab, no del angulo radial: se
+        # construyen una vez por slab y se reutilizan en las N vistas.  Rehacerlos
+        # dentro del bucle de vistas no cambiaba el .seq (la libreria de eventos
+        # deduplica) pero multiplicaba por n_views el coste de construccion.
+        rf_inv_bg, gz_inv_bg = make_adiabatic_inversion(
+            system, INV_SLAB_THICKNESS, z_c)
+        rf_inv_ven, gz_inv_ven = make_adiabatic_inversion(
+            system, INV_VENOUS_THICKNESS, z_venous)
+
+        t_prep = (pp.calc_duration(gz_inv_bg) + pp.calc_duration(gz_inv_ven)
+                  + pp.calc_duration(spoiler))
+        t_qi_delay = T_READOUT_START - t_prep - TR_BSSFP / 2   # alpha/2 ocupa TR/2
+        if t_qi_delay < 0:
+            raise ValueError(
+                f"QI insuficiente: la preparacion ({t_prep*1e3:.1f} ms) excede "
+                f"el inicio de readout ({T_READOUT_START*1e3:.1f} ms)"
+            )
+
         for i_view in range(n_views):
             theta = view_angle(i_view, n_views)
 
             # ---------------- modulo de preparacion ----------------
-            rf_inv_bg, gz_inv_bg = make_adiabatic_inversion(
-                system, INV_SLAB_THICKNESS, z_c)
             seq.add_block(rf_inv_bg, gz_inv_bg)
-
-            rf_inv_ven, gz_inv_ven = make_adiabatic_inversion(
-                system, INV_VENOUS_THICKNESS, z_venous)
             seq.add_block(rf_inv_ven, gz_inv_ven)
-
             seq.add_block(spoiler)
 
             # ---------------- intervalo quiescente ----------------
-            t_prep = (pp.calc_duration(gz_inv_bg) + pp.calc_duration(gz_inv_ven)
-                      + pp.calc_duration(spoiler))
-            t_qi_delay = T_READOUT_START - t_prep - TR_BSSFP / 2   # alpha/2 ocupa TR/2
-            if t_qi_delay < 0:
-                raise ValueError(
-                    f"QI insuficiente: la preparacion ({t_prep*1e3:.1f} ms) excede "
-                    f"el inicio de readout ({T_READOUT_START*1e3:.1f} ms)"
-                )
             seq.add_block(pp.make_delay(
                 np.round(t_qi_delay / system.grad_raster_time) * system.grad_raster_time))
 
@@ -501,3 +514,28 @@ if __name__ == "__main__":
     out = "qiss3d_tssos_bssfp_055T_quick.seq" if quick else "qiss3d_tssos_bssfp_055T.seq"
     seq.write(out)
     print(f"\nExportado: {out}")
+
+    # ---------------- compatibilidad con el interprete del scanner ----------------
+    print("\nCompatibilidad con el interprete Pulseq "
+          f"{'.'.join(map(str, SCANNER_INTERPRETER_VERSION))} del scanner:")
+    with open(out) as fh:
+        head = fh.read(400)
+    ver = tuple(int(re.search(rf"{k}\s+(\d+)", head).group(1))
+                for k in ("major", "minor", "revision"))
+    print(f"  Version declarada en el .seq : {'.'.join(map(str, ver))}"
+          f"  {'(coincide)' if ver == SCANNER_INTERPRETER_VERSION else '(NO COINCIDE)'}")
+
+    n_blocks = len(seq.block_events)
+    print(f"  Bloques                      : {n_blocks}")
+    print(f"  Tamano de archivo            : {os.path.getsize(out)/1e6:.2f} MB")
+    print(f"  Muestras por ADC             : {core.n_read} "
+          f"({'multiplo de 4, OK' if core.n_read % 4 == 0 else 'NO es multiplo de 4'})")
+    dwell = core.adc.dwell
+    print(f"  Dwell del ADC                : {dwell*1e9:.0f} ns "
+          f"({'en raster de 100 ns' if round(dwell*1e9) % 100 == 0 else 'FUERA de raster'})")
+    print("  Features usadas: RF arbitrario (adiabaticos), trapecios, ADC, delays.")
+    print("  No se usan labels, triggers ni extensions, que es donde mas divergen")
+    print("  las versiones de interprete.")
+    print(f"\n  A VERIFICAR EN EL SCANNER: {n_blocks} bloques es una secuencia grande.")
+    print("  El interprete carga el .seq entero en memoria, asi que conviene probar")
+    print("  primero con --quick (2 slabs) y confirmar que carga antes del examen completo.")
