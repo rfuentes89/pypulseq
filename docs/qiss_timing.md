@@ -205,6 +205,6 @@ Cambiar `VIEW_ORDER` a `"uniform"` si se reconstruye con gridding/NUFFT simple.
    ni extensions, que es donde más divergen las versiones de intérprete.
    Lo que **sí** queda por comprobar es que el intérprete cargue los **38 304
    bloques**: el `.seq` se carga entero en memoria. Conviene probar primero con
-   `--quick` (2 slabs, 2 018 bloques) y confirmar que carga antes del examen completo.
+   `--quick` (2 slabs x 4 vistas, 504 bloques) y confirmar que carga antes del examen completo.
 5. **SAR.** A 0.55 T escala con B0² y no debería limitar ni con FA de 100° ni con los
    dos adiabáticos por disparo, pero conviene confirmarlo en el scanner.
