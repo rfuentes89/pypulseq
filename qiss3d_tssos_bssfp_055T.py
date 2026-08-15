@@ -57,12 +57,10 @@ T1_BLOOD, T2_BLOOD = 1.122, 0.263      # s
 T1_FAT, T2_FAT = 0.187, 0.093          # s
 T1_MUSCLE, T2_MUSCLE = 0.450, 0.055    # s
 
-# --- PENDIENTE DE CONFIRMAR CON EL SISTEMA REAL -----------------------------
-# Estos tres tiempos muertos no estan publicados para el Free.Max y NO deben
-# darse por buenos sin leerlos del scanner.  Los valores de abajo son
-# conservadores; si los reales son menores, el TR minimo baja y sobra margen.
+# --- Tiempos muertos CONFIRMADOS en el sistema real -------------------------
+# Leidos del Free.Max del usuario (no son valores de catalogo ni estimaciones).
 RF_DEAD_TIME = 100e-6           # s
-RF_RINGDOWN_TIME = 30e-6        # s
+RF_RINGDOWN_TIME = 20e-6        # s
 ADC_DEAD_TIME = 10e-6           # s
 # ----------------------------------------------------------------------------
 

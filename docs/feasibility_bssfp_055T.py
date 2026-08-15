@@ -33,9 +33,9 @@ DERATE = 0.85
 system = pp.Opts(
     max_grad=26 * DERATE, grad_unit="mT/m",
     max_slew=45 * DERATE, slew_unit="T/m/s",
-    rf_ringdown_time=30e-6,     # PROVISIONAL - confirmar con el sistema real
-    rf_dead_time=100e-6,        # PROVISIONAL - confirmar con el sistema real
-    adc_dead_time=10e-6,        # PROVISIONAL - confirmar con el sistema real
+    rf_ringdown_time=20e-6,     # confirmado en el sistema real
+    rf_dead_time=100e-6,        # confirmado en el sistema real
+    adc_dead_time=10e-6,        # confirmado en el sistema real
     grad_raster_time=10e-6,
     rf_raster_time=1e-6,
     B0=B0,

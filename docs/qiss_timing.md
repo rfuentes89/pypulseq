@@ -180,8 +180,13 @@ Cambiar `VIEW_ORDER` a `"uniform"` si se reconstruye con gridding/NUFFT simple.
 
 ## 7. Lo que queda pendiente antes del scanner
 
-1. **`rf_dead_time`, `rf_ringdown_time`, `adc_dead_time` reales.** Los del script son
-   provisionales y conservadores. Si los reales son menores, sobra margen de TR.
+1. ~~Tiempos muertos del sistema.~~ **Confirmados**: `rf_dead_time` = 100 µs,
+   `rf_ringdown_time` = 20 µs, `adc_dead_time` = 10 µs. El ringdown resultó 10 µs más
+   corto que la estimación conservadora, pero **el TR mínimo no se movió** (sigue en
+   5.96 ms): el bloque de excitación lo limita la duración del gradiente selector de
+   slab —600 µs de RF más 2 × 160 µs de rampas = 920 µs— y el evento de RF completo
+   (100 + 600 + 20 = 720 µs) cabe holgado dentro. Los 10 µs se absorben en la rampa,
+   no en el presupuesto de TR. El ancho de banda se mantiene en 356 Hz/px.
 2. **PNS.** Los tres ejes cumplen por separado (19.7 / 19.6 / 22.0 mT/m contra el
    límta derateado de 22.1), que es como el fabricante especifica el gradiente. La
    magnitud **vectorial** llega a 28.0 mT/m y 53.3 T/m/s al sumar ejes en diagonal, cosa
