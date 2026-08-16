@@ -319,3 +319,78 @@ El músculo pasa a ser el fondo limitante, no la grasa.
 **Límite conocido:** con una desviación de B0 de 20 Hz la grasa sube a 0.140 y el
 contraste cae a 4.8:1. A 0.55T la inhomogeneidad en Hz es pequeña, pero conviene un
 buen shim sobre el cuello. Es el punto más frágil del diseño.
+
+
+## 10. Cómo averiguar el B1 máximo del Free.Max
+
+Es el único límite de hardware que PyPulseq **no** modela: `pp.Opts` no tiene campo de
+B1, así que un pulso que exceda la bobina no falla al construir el `.seq` — lo rechaza
+el intérprete en el scanner. Por eso el script hace una auditoría al exportar.
+
+### Exigencia de la secuencia
+
+| Pulso | B1 de pico |
+|---|---|
+| Excitación bSSFP (100°, 600 µs) | **33.36 µT** ← el que manda |
+| Inversiones WURST (16 ms) | 9.37 µT |
+| Fat-sat espectral (90°, 15 ms) | 0.50 µT |
+
+**Piso duro: 8.43 µT.** Por debajo, los WURST dejan de invertir de forma uniforme
+(eficiencia < 0.95) y el contraste de QISS se cae. No es una degradación suave.
+
+### Ruta 1 — calcularlo desde la reference voltage (la más rápida)
+
+Siemens define la *transmitter reference amplitude* como la tensión que produce un
+pulso rectangular de 180° en 1 ms. Eso son exactamente 11.74 µT:
+
+```
+180° = 360 · γ̄ · B1 · T  →  B1 = 180 / (360 × 42.576e6 × 1e-3) = 11.74 µT
+```
+
+De ahí:
+
+```
+B1_max [µT] = 11.74 × V_amplificador_max / V_referencia
+```
+
+La reference voltage aparece tras la calibración de transmisor en la tarjeta de
+ajustes del protocolo. La tensión máxima del amplificador es una constante del sistema
+que hay que pedir a Siemens o al especialista de aplicaciones.
+
+### Ruta 2 — empíricamente con Pulseq
+
+Escribir un `.seq` mínimo con un pulso rectangular de amplitud creciente y ver a partir
+de qué valor el intérprete lo rechaza o lo escala. Es la medida directa del límite
+efectivo, incluyendo cualquier derate que aplique el sistema. Tiene la ventaja de medir
+lo que realmente se puede tocar, no lo que dice la especificación.
+
+### Ruta 3 — preguntar
+
+Al especialista de aplicaciones de Siemens o en la comunidad de Pulseq. El dato de
+bobina de cuerpo suele estar documentado en el archivo de configuración del sistema.
+
+### Qué hacer con la respuesta
+
+El B1 de pico escala aproximadamente como 1/duración del pulso, así que la excitación
+bSSFP se puede alargar. El coste es indirecto: el bloque de excitación crece y, para
+mantener el TR de 6.28 ms, el readout se acorta y sube el ancho de banda, lo que resta
+SNR justo donde menos sobra.
+
+| B1 máx | duración mínima del RF a 100° | ancho de banda resultante | veredicto |
+|---|---|---|---|
+| 8 µT | — | — | **inviable**: ni alcanza el piso adiabático |
+| 10 µT | 2000 µs | 629 Hz/px | funciona, ~1.3× menos SNR |
+| 15 µT | 1334 µs | ~450 Hz/px | funciona, penalización moderada |
+| 20 µT | 1000 µs | 394 Hz/px | casi sin coste |
+| ≥ 33 µT | 600 µs | 356 Hz/px | el diseño actual, sin tocar nada |
+
+Cuando tengas el número, ponerlo en `MAX_B1_UT` y la auditoría avisa si algún pulso lo
+excede.
+
+### Margen adiabático: ajustado
+
+Los WURST están diseñados a 9.37 µT sobre un umbral de 8.43 µT — solo **1.1× de
+margen**. Eso es poco para un adiabático, cuya gracia es precisamente ser insensible al
+B1 *por encima* del umbral. Si el B1 varía por el cuello (y con un bore de 80 cm varía),
+algunas regiones pueden caer por debajo. Si el sistema da holgura, conviene subir la
+amplitud de diseño de los adiabáticos para separarse del umbral.

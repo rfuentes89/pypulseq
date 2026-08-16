@@ -100,6 +100,22 @@ system = pp.Opts(
 # de pypulseq no rompa la compatibilidad en silencio.
 SCANNER_INTERPRETER_VERSION = (1, 4, 2)
 
+# --- B1 maximo de la bobina de transmision ----------------------------------
+# PENDIENTE DE CONFIRMAR.  PyPulseq no modela un limite de B1 (pp.Opts no tiene
+# campo para el), asi que si se excede no salta aqui: lo rechaza el interprete
+# del scanner, ya con el paciente en la camilla.  Por eso la auditoria de abajo.
+#
+# Como averiguarlo en un Siemens (ver docs/qiss_timing.md, seccion 10):
+#   B1_max [uT] = 11.74 * V_amplificador_max / V_referencia
+# porque la "reference voltage" de Siemens se define como la que produce un
+# pulso rectangular de 180 grados en 1 ms, que son exactamente 11.74 uT.
+MAX_B1_UT = None                # poner el valor real en uT; None = solo informa
+
+# Umbral adiabatico medido por simulacion (ver el barrido en docs/): por debajo
+# de este B1 los WURST dejan de invertir de forma uniforme y el contraste de QISS
+# se cae.  Es un piso duro, no una degradacion suave.
+B1_UMBRAL_ADIABATICO_UT = 8.43
+
 # =============================================================================
 # 2. PARAMETROS DE LA SECUENCIA
 # =============================================================================
@@ -608,7 +624,34 @@ if __name__ == "__main__":
     dwell = core.adc.dwell
     print(f"  Dwell del ADC                : {dwell*1e9:.0f} ns "
           f"({'en raster de 100 ns' if round(dwell*1e9) % 100 == 0 else 'FUERA de raster'})")
-    print("  Features usadas: RF arbitrario (adiabaticos), trapecios, ADC, delays.")
+    # ---------------- auditoria de B1 ----------------
+    print("\nAuditoria de B1 de pico por pulso:")
+    rf_fs = make_fatsat(system)
+    rf_inv, _ = make_adiabatic_inversion(system, INV_SLAB_THICKNESS, 0.0)
+    pulsos = [
+        ("excitacion bSSFP", core.rf),
+        ("inversiones WURST", rf_inv),
+        ("fat-sat espectral", rf_fs),
+    ]
+    b1_max_usado = 0.0
+    for nombre, r in pulsos:
+        b1 = np.abs(r.signal).max() / GAMMA_BAR * 1e6
+        b1_max_usado = max(b1_max_usado, b1)
+        aviso = ""
+        if MAX_B1_UT is not None and b1 > MAX_B1_UT:
+            aviso = f"  EXCEDE el limite de {MAX_B1_UT} uT"
+        print(f"  {nombre:20s}: {b1:6.2f} uT{aviso}")
+    print(f"  {'PICO DE LA SECUENCIA':20s}: {b1_max_usado:6.2f} uT")
+    print(f"  Piso adiabatico          : {B1_UMBRAL_ADIABATICO_UT:6.2f} uT "
+          "(por debajo, las inversiones fallan)")
+    if MAX_B1_UT is None:
+        print("  -> MAX_B1_UT sin definir: confirmar el B1 maximo del scanner.")
+        print("     Si resulta < el pico de arriba, alargar la excitacion bSSFP")
+        print("     (el B1 escala ~1/duracion) a costa de mas ancho de banda.")
+    elif MAX_B1_UT < B1_UMBRAL_ADIABATICO_UT:
+        print("  -> INVIABLE: el sistema no alcanza ni el piso adiabatico.")
+
+    print("\n  Features usadas: RF arbitrario (adiabaticos), trapecios, ADC, delays.")
     print("  No se usan labels, triggers ni extensions, que es donde mas divergen")
     print("  las versiones de interprete.")
     print(f"\n  A VERIFICAR EN EL SCANNER: {n_blocks} bloques es una secuencia grande.")
