@@ -32,7 +32,14 @@ darían errores grandes: el T1 se acorta y el T2 se alarga al bajar B0.
 
 Razón T2/T1 de la sangre = 0.234, que es lo que fija el contraste alcanzable en bSSFP.
 
-## 3. TR de bSSFP: la grasa cae en el stopband
+## 3. TR de bSSFP: por qué 6.28 ms
+
+> **Corrección.** Este apartado sostenía que el TR de 6.28 ms suprime la grasa por sí
+> solo al colocarla en el nulo del stopband. **La simulación lo refutó** — ver sección 9.
+> El TR se mantiene en 6.28 ms porque es aproximadamente el mínimo que permiten estos
+> gradientes, pero la supresión grasa la hace un pulso espectral dedicado.
+
+### El argumento original (que resultó insuficiente)
 
 Larmor a 0.55 T: 42.576 MHz/T × 0.55 T = **23.42 MHz**.
 
@@ -111,8 +118,8 @@ el tiempo de examen lo agradecería.
 | Sangre estática / venosa | −4.9 % |
 | Sangre arterial entrante | +100 % — nunca vio la inversión |
 
-Que la grasa quede en +36 % es la confirmación de que el nulo del stopband de bSSFP
-(sección 3) no es un adorno: es lo único que la suprime.
+Que la grasa quede en +36 % es lo que obliga a un fat-sat espectral dedicado: ni el TI
+ni el nulo del stopband la bajan lo suficiente en una ventana de 14 TRs (sección 9).
 
 Que la sangre venosa quede en −4.9 % no es casualidad buscada sino consecuencia de que,
 con TR corto, el TI de nulo de un T1 largo baja mucho. Refuerza la banda "tracking".
@@ -120,9 +127,11 @@ con TR corto, el TI de nulo de un T1 largo baja mucho. Refuerza la banda "tracki
 ## 5. Presupuesto del disparo
 
 ```
-inversión de fondo (8 ms) + inversión venosa (8 ms) + spoiler
+inversión de fondo WURST (16 ms) + inversión venosa WURST (16 ms) + spoiler
   ↓
 delay del QI
+  ↓
+fat-sat espectral (15 ms) + spoiler      ← pegado al tren, para que la grasa no se recupere
   ↓
 preparación α/2  (TR/2 = 3.14 ms)
   ↓
@@ -255,3 +264,58 @@ B1 de pico exigido: **9.37 µT** (contra 13.24 µT del hypsec).
 **Pendiente:** confirmar el B1 máximo del cuerpo del Free.Max. Un adiabático por
 debajo de su umbral de B1 deja de invertir de forma uniforme y todo este análisis
 se cae. Es el único número de esta sección que no está verificado.
+
+
+## 9. Contraste del tren bSSFP (simulación) y la corrección de la supresión grasa
+
+`sim_bssfp_contrast.py` simula el tren completo —estado post-inversión, preparación
+α/2, 14 TRs con alternancia de fase, muestreo en TE = TR/2— para cada tejido.
+
+### Lo que refutó
+
+El nulo del stopband de bSSFP es un fenómeno de **estado estacionario**. La ventana de
+lectura de QISS son 14 TRs, 88 ms. Con T1/T2 de grasa de 187/93 ms eso no alcanza:
+
+| | \|Mxy\| |
+|---|---|
+| Grasa en estado estacionario (400 TRs) | 0.014 |
+| Grasa en el centro de k (TR #10), sin fat-sat | 0.189 |
+
+Trece veces y media por encima del asintótico. El contraste arteria/grasa quedaba en
+**3.6:1**, con la grasa brillante en las MIP.
+
+Se descartaron por medición dos alternativas más baratas: mover kz=0 al final del tren
+sube el contraste solo a 5.1:1, y bajar el flip angle cuesta más señal arterial de la
+que gana en supresión (a 50° el contraste incluso empeora, 2.1:1).
+
+### La corrección
+
+Pulso gaussiano de 90°, 15 ms, TBW 1.0, centrado a −79.6 Hz, **selectivo en frecuencia
+y no en espacio** (sin gradiente durante el RF, así que no puede saturar sangre
+entrante por su posición). Va pegado al tren para que la grasa no se recupere.
+
+La duración se eligió simulando el perfil espectral, no por defecto:
+
+| duración | Mz agua | Mz grasa | Mz agua peor caso a ±20 Hz |
+|---|---|---|---|
+| 10 ms | +0.878 | +0.047 | +0.660 |
+| **15 ms** | **+0.996** | **+0.070** | **+0.939** |
+| 20 ms | +0.982 | +0.092 | +0.994 (pero grasa sube a +0.413) |
+
+B1 de pico: 0.496 µT, despreciable frente a los 9.37 µT de los adiabáticos.
+
+### Contraste resultante en el centro de k
+
+| tejido | \|Mxy\| | contra arteria |
+|---|---|---|
+| Sangre arterial entrante | 0.676 | — |
+| Sangre estática / venosa | 0.007 | 104 : 1 |
+| Grasa con fat-sat | 0.031 | 22 : 1 |
+| Músculo | 0.049 | 14 : 1 |
+| *Grasa sin fat-sat* | *0.189* | *3.6 : 1* |
+
+El músculo pasa a ser el fondo limitante, no la grasa.
+
+**Límite conocido:** con una desviación de B0 de 20 Hz la grasa sube a 0.140 y el
+contraste cae a 4.8:1. A 0.55T la inhomogeneidad en Hz es pequeña, pero conviene un
+buen shim sobre el cuello. Es el punto más frágil del diseño.

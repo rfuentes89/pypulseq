@@ -14,11 +14,20 @@ Hardware (Varghese et al., Front Cardiovasc Med 2023, doi:10.3389/fcvm.2023.1120
 
 TRES DESVIACIONES DELIBERADAS respecto de los papers, todas forzadas por el bajo campo:
 
-  1. Supresion grasa por stopband de bSSFP, no por TEs en oposicion de fase.
-     A 0.55T la separacion grasa-agua es 79.6 Hz, asi que TR = 1/(2*79.6) = 6.28 ms
-     coloca la grasa exactamente en el nulo de la banda de paso.  A 3T ese truco
-     exigiria TR = 1.15 ms (irrealizable), y por eso Koktzoglou usa TEs multiples.
-     Feliz coincidencia: 6.28 ms es tambien ~ el TR minimo que permiten estos gradientes.
+  1. Supresion grasa por fat-sat espectral, no por TEs en oposicion de fase.
+     A 0.55T la separacion grasa-agua es solo 79.6 Hz, asi que los TEs en oposicion
+     de fase de Koktzoglou (1.6/3.7/5.7 ms a 3T) quedan aqui casi EN fase y no
+     suprimen nada.  Se usa un gaussiano de 15 ms centrado en la grasa.
+
+     ADVERTENCIA, por si alguien intenta simplificar esto: el TR de 6.28 ms coincide
+     con 1/(2*79.6 Hz), que pone la grasa en el nulo del stopband de bSSFP, y es
+     tentador concluir que el fat-sat sobra.  NO SOBRA.  El nulo del stopband es un
+     fenomeno de estado ESTACIONARIO y la ventana de lectura son solo 14 TRs: la
+     simulacion (sim_bssfp_contrast.py) muestra que en el centro de k la grasa esta
+     13.5x por encima de su valor asintotico.  Con fat-sat el contraste
+     arteria/grasa es 22:1; sin el cae a 3.6:1.  El TR de 6.28 ms se conserva
+     igual porque es tambien ~el TR minimo que permiten estos gradientes, pero
+     no es lo que suprime la grasa.
 
   2. QISS TR de 600 ms en vez de los 1500 ms del paper de 3T.
      Con readout bSSFP de flip angle alto no se puede sostener una ventana de
@@ -165,6 +174,21 @@ INV_VENOUS_THICKNESS = 60e-3          # m
 INV_VENOUS_GAP = 5e-3                 # m, hueco entre borde superior del slab y la banda
 SPOILER_CYCLES_PER_VOXEL = 4          # ciclos de fase por voxel tras la inversion
 
+# --- Saturacion grasa espectral
+#
+# NECESARIA pese al TR de stopband.  La simulacion del tren (sim_bssfp_contrast.py)
+# mostro que el nulo del stopband es un fenomeno de ESTADO ESTACIONARIO y que en los
+# 14 TRs de la ventana la grasa se queda 13.5x por encima de su valor asintotico:
+# el contraste arteria/grasa cae a 3.6:1, insuficiente.  Con este pulso sube a 52:1.
+#
+# Duracion elegida por simulacion del perfil espectral, no por defecto: a 0.55T solo
+# hay 79.6 Hz entre grasa y agua, asi que el pulso tiene que ser largo y estrecho.
+# 15 ms con TBW 1.0 deja el agua en +0.996 y la grasa en +0.070 en resonancia, y
+# aguanta +-20 Hz de desviacion de B0 con el agua en >=0.939.  El de 10 ms tira el
+# agua a 0.878 y el de 20 ms pierde la grasa mas rapido fuera de resonancia.
+FATSAT_DURATION = 15e-3               # s
+FATSAT_TBW = 1.0                      # producto tiempo-ancho de banda
+
 # Direccion de flujo: en el cuello la sangre arterial sube (caudal -> craneal, +z),
 # la venosa baja.  Por eso la banda venosa va POR ENCIMA del slab.
 Z_SUPERIOR = +1
@@ -202,6 +226,26 @@ def make_adiabatic_inversion(sys, thickness, z_center, duration=INV_DURATION):
     # df = gamma * G * z, con G la amplitud del gradiente selector en Hz/m.
     rf.freq_offset = gz.amplitude * z_center
     return rf, gz
+
+
+def make_fatsat(sys, duration=FATSAT_DURATION, tbw=FATSAT_TBW):
+    """Pulso de 90 grados selectivo en FRECUENCIA (no en espacio) centrado en la grasa.
+
+    Sin gradiente durante el RF: la selectividad es puramente espectral, asi que no
+    toca la sangre entrante por su posicion — que es la objecion por la que Koktzoglou
+    evita el fat-sat a 3T (alli teme saturar espines arteriales por inhomogeneidad de
+    campo).  A 0.55T la inhomogeneidad en Hz es mucho menor y el riesgo baja, pero el
+    margen sigue siendo estrecho porque grasa y agua solo distan 79.6 Hz.
+    """
+    rf = pp.make_gauss_pulse(
+        flip_angle=np.pi / 2,
+        duration=duration,
+        time_bw_product=tbw,
+        freq_offset=-DF_FAT,      # centrado en la grasa, por debajo del agua
+        system=sys,
+        use="saturation",
+    )
+    return rf[0] if isinstance(rf, tuple) else rf
 
 
 def make_spoiler(sys, voxel_size_m, n_cycles=SPOILER_CYCLES_PER_VOXEL, axis="z"):
@@ -343,6 +387,7 @@ def build_sequence(n_slabs=N_SLABS, n_views=N_VIEWS, verbose=True):
                            FLIP_ANGLE_DEG, TR_BSSFP)
 
     spoiler = make_spoiler(system, PARTITION_THICKNESS)
+    rf_fatsat = make_fatsat(system)
 
     # Pulso alpha/2 para entrar al estado estacionario de bSSFP sin oscilacion
     # transitoria (Le Roux).  Sin el, las primeras vistas radiales traen artefacto.
@@ -377,11 +422,16 @@ def build_sequence(n_slabs=N_SLABS, n_views=N_VIEWS, verbose=True):
 
         t_prep = (pp.calc_duration(gz_inv_bg) + pp.calc_duration(gz_inv_ven)
                   + pp.calc_duration(spoiler))
-        t_qi_delay = T_READOUT_START - t_prep - TR_BSSFP / 2   # alpha/2 ocupa TR/2
+        # El fat-sat va lo mas pegado posible al tren para que la grasa no tenga
+        # tiempo de recuperarse antes del centro de k.
+        t_fatsat = pp.calc_duration(rf_fatsat) + pp.calc_duration(spoiler)
+        t_qi_delay = (T_READOUT_START - t_prep - t_fatsat
+                      - TR_BSSFP / 2)                          # alpha/2 ocupa TR/2
         if t_qi_delay < 0:
             raise ValueError(
-                f"QI insuficiente: la preparacion ({t_prep*1e3:.1f} ms) excede "
-                f"el inicio de readout ({T_READOUT_START*1e3:.1f} ms)"
+                f"QI insuficiente: preparacion ({t_prep*1e3:.1f} ms) + fat-sat "
+                f"({t_fatsat*1e3:.1f} ms) exceden el inicio de readout "
+                f"({T_READOUT_START*1e3:.1f} ms)"
             )
 
         for i_view in range(n_views):
@@ -395,6 +445,10 @@ def build_sequence(n_slabs=N_SLABS, n_views=N_VIEWS, verbose=True):
             # ---------------- intervalo quiescente ----------------
             seq.add_block(pp.make_delay(
                 np.round(t_qi_delay / system.grad_raster_time) * system.grad_raster_time))
+
+            # ---------------- saturacion grasa espectral ----------------
+            seq.add_block(rf_fatsat)
+            seq.add_block(spoiler)
 
             # ---------------- preparacion alpha/2 ----------------
             rf_half.phase_offset = np.pi          # opuesta al primer alpha del tren
@@ -427,7 +481,7 @@ def build_sequence(n_slabs=N_SLABS, n_views=N_VIEWS, verbose=True):
                 seq.add_block(gz_post, gx_pre, gy_pre)
 
             # ---------------- relleno hasta completar el QISS TR ----------------
-            t_shot = (t_prep + t_qi_delay + TR_BSSFP / 2
+            t_shot = (t_prep + t_qi_delay + t_fatsat + TR_BSSFP / 2
                       + N_KZ_ACQUIRED * TR_BSSFP)
             t_fill = TR_QISS - t_shot
             if t_fill < 0:
@@ -458,6 +512,8 @@ def report(core, n_slabs, n_views):
           f"[objetivo 1/(2*df) = {1/(2*DF_FAT)*1e3:.2f} ms]")
     print(f"  TE (= TR/2)                 : {TR_BSSFP/2*1e3:.2f} ms")
     print(f"  Flip angle                  : {FLIP_ANGLE_DEG} deg")
+    print(f"  Fat-sat espectral           : gauss {FATSAT_DURATION*1e3:.0f} ms, "
+          f"TBW {FATSAT_TBW}, centrado a -{DF_FAT:.1f} Hz")
     print(f"  Ancho de banda receptor     : {core.bw_per_pixel:.0f} Hz/px")
     print(f"  Muestras por proyeccion     : {core.n_read}")
     print("-" * 72)
